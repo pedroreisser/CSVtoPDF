@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Build / distribuição
+*.zip
+build/
+dist/
+*.spec
+
+# Config local do usuário (fica em ~/.pdf_harvester_config.json, mas por segurança)
+.pdf_harvester_config.json
+
+# Saídas de execução (caso alguém rode dentro da pasta do projeto)
+pdfs/
+download_log.csv
+nao_encontrados.csv
+nao_encontrados.html
+
+# Editores / SO
+.claude/
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,64 @@
+=====================================================
+  PDF HARVESTER — Download de artigos em acesso aberto
+=====================================================
+
+O QUE FAZ
+─────────
+Recebe uma lista de artigos exportada do Scopus ou Web of Science
+(.csv ou .txt) e baixa automaticamente os PDFs que tiverem versão de
+acesso aberto, usando a base Unpaywall. Nunca burla paywall — só baixa
+o que os próprios periódicos/repositórios disponibilizam legalmente.
+
+REQUISITO: Python 3.9 ou superior
+  • Windows: o "iniciar.bat" instala sozinho se não tiver
+  • Linux/Mac: normalmente já vem instalado
+
+
+COMO INICIAR
+────────────
+Windows:
+  Dê duplo clique em "iniciar.bat"
+  O programa instala o que precisar automaticamente na primeira vez.
+
+Linux:
+  Dê duplo clique em "iniciar.py" e escolha "Executar".
+  (Ou, pelo terminal nesta pasta: python3 iniciar.py)
+
+Mac:
+  Abra o terminal nesta pasta e execute:
+    python3 iniciar.py
+
+
+NA PRIMEIRA EXECUÇÃO
+────────────────────
+O programa instala sozinho a única dependência necessária (requests,
+poucos MB) e já abre o PDF Harvester. Nada requer permissão de
+administrador.
+
+
+COMO USAR
+─────────
+  1. Clique em "Selecionar arquivo" e escolha a lista exportada
+     (.csv do Scopus ou .txt do Web of Science — o programa detecta
+     sozinho o formato e as colunas de DOI e título).
+     Pode selecionar VÁRIOS arquivos de uma vez (Ctrl+clique ou
+     Shift+clique) — útil porque o Web of Science exporta no máximo
+     1000 registros por arquivo. As listas são somadas e artigos
+     repetidos entre os arquivos são removidos automaticamente.
+  2. Digite seu e-mail (exigido pela API do Unpaywall; não precisa
+     de conta nem senha — fica salvo para a próxima vez)
+  3. Confira a pasta de destino (padrão: pasta "pdfs" ao lado da lista)
+  4. Clique em "Iniciar download" e acompanhe o progresso
+  5. Ao final, dois arquivos são salvos junto com os PDFs:
+       • download_log.csv    — o que aconteceu com cada artigo
+       • nao_encontrados.csv — artigos sem versão aberta, para
+         reprocessar depois ou repassar para busca manual
+         (opcional: desmarque a caixa na etapa de configuração
+         se não quiser gerar esse arquivo)
+
+
+DÚVIDAS / PROBLEMAS
+────────────────────
+• Se o programa não abrir após instalar o Python, reinicie o computador.
+• Em caso de erro de permissão no Linux, tente:
+    pip install requests --break-system-packages
