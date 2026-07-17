@@ -155,7 +155,7 @@ class App(tk.Tk):
         tk.Button(row2, text="Escolher...", command=self._on_choose_dest).pack(side="left", padx=(6, 0))
 
         self.nao_encontrados_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(f, text="Salvar lista dos não baixados (CSV + HTML com DOIs clicáveis)",
+        tk.Checkbutton(f, text="Salvar lista dos não baixados",
                        variable=self.nao_encontrados_var, bg=COLORS["bg"],
                        anchor="w").pack(fill="x", pady=(4, 0))
 
@@ -347,12 +347,6 @@ class App(tk.Tk):
         partes = [f"{total} artigo(s)"]
         if n_arquivos > 1:
             partes[0] += f" de {n_arquivos} arquivo(s)"
-        else:
-            header, _, doi_col, title_col, year_col = file_infos[0]
-            partes.append(f"DOI: coluna '{header[doi_col]}'")
-            partes.append(f"Título: coluna '{header[title_col]}'")
-            if year_col is not None:
-                partes.append(f"Ano: coluna '{header[year_col]}'")
         partes.append(f"{valid_dois} com DOI válido")
         if duplicados:
             partes.append(f"{duplicados} duplicado(s) removido(s)")
