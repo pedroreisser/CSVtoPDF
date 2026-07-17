@@ -49,16 +49,35 @@ COMO USAR
      de conta nem senha — fica salvo para a próxima vez)
   3. Confira a pasta de destino (padrão: pasta "pdfs" ao lado da lista)
   4. Clique em "Iniciar download" e acompanhe o progresso
-  5. Ao final, dois arquivos são salvos junto com os PDFs:
-       • download_log.csv    — o que aconteceu com cada artigo
-       • nao_encontrados.csv — artigos sem versão aberta, para
-         reprocessar depois ou repassar para busca manual
-         (opcional: desmarque a caixa na etapa de configuração
-         se não quiser gerar esse arquivo)
+  5. Ao final, a lista dos NÃO baixados é salva junto com os PDFs
+     (opcional — desmarque a caixa na etapa de configuração para não gerar):
+       • nao_encontrados.csv  — para reprocessar depois ou repassar
+       • nao_encontrados.html — abra no navegador: DOIs clicáveis, com
+         coluna de ano (clique no cabeçalho para ordenar) e marcação
+         do que você já abriu
 
 
-DÚVIDAS / PROBLEMAS
-────────────────────
-• Se o programa não abrir após instalar o Python, reinicie o computador.
+DÚVIDAS / PROBLEMAS (WINDOWS 11)
+────────────────────────────────
+• "O Windows protegeu o seu PC" (tela azul do SmartScreen) ao abrir o .bat:
+  clique em "Mais informações" e depois "Executar assim mesmo".
+  Isso acontece porque o arquivo foi baixado da internet — é esperado.
+  (Alternativa: clique com o botão direito no .bat → Propriedades →
+   marque "Desbloquear" embaixo → OK.)
+
+• EXTRAIA a pasta do .zip antes de executar. Rodar de dentro do .zip
+  (visualização do Windows) não funciona.
+
+• Se a janela abrir e fechar rápido, ou o programa não aparecer:
+  agora é criado um arquivo "csvtopdf_erro.txt" na pasta, com o detalhe
+  do erro. A janela preta também fica aberta mostrando a mensagem —
+  tire um print ou envie o csvtopdf_erro.txt para o suporte.
+
+• Se o programa não abrir logo após instalar o Python, reinicie o
+  computador (para o Windows reconhecer o Python) e tente de novo.
+
+
+DÚVIDAS / PROBLEMAS (LINUX/MAC)
+────────────────────────────────
 • Em caso de erro de permissão no Linux, tente:
     pip install requests --break-system-packages

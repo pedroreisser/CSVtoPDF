@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import traceback
 
 # Única dependência externa; tkinter vem com o Python (no Linux, via python3-tk).
 DEPS_OBRIGATORIAS = [
@@ -194,7 +195,65 @@ def _instalar_pacotes(pacotes, callback_log, callback_fim):
 
 
 def _abrir_app():
-    subprocess.Popen([sys.executable, SCRIPT])
+    """Abre a ferramenta no MESMO processo, em vez de spawnar-e-sair.
+
+    Spawnar e encerrar escondia qualquer erro de inicialização: se o app
+    quebrava ao abrir, a janela simplesmente não aparecia e ninguém via a
+    causa. Rodando aqui, qualquer exceção é capturada e mostrada (diálogo +
+    console + arquivo de log), e o código de saída != 0 faz o .bat pausar.
+    """
+    pasta = os.path.dirname(SCRIPT)
+    if pasta not in sys.path:
+        sys.path.insert(0, pasta)
+    try:
+        import gui
+    except ImportError:
+        # Dependência recém-instalada pode não importar neste processo já
+        # iniciado; reabre num processo limpo (aí sim como subprocess).
+        res = subprocess.run([sys.executable, SCRIPT])
+        if res.returncode != 0:
+            _erro_ao_abrir(f"O programa saiu com código {res.returncode}. "
+                           "Veja a janela do programa para detalhes.")
+        return
+    try:
+        gui.App().mainloop()
+    except Exception:
+        _erro_ao_abrir(traceback.format_exc())
+
+
+def _erro_ao_abrir(detalhe):
+    """Mostra a falha de inicialização de todas as formas possíveis, para que
+    o usuário consiga ver e reportar (em vez de a janela só não abrir)."""
+    log = os.path.join(os.path.dirname(SCRIPT), "csvtopdf_erro.txt")
+    try:
+        with open(log, "w", encoding="utf-8") as f:
+            f.write(detalhe)
+    except OSError:
+        log = "(não foi possível salvar o log)"
+
+    print("\n===== Erro ao abrir o CSVtoPDF =====")
+    print(detalhe)
+    print(f"\nDetalhes salvos em: {log}")
+
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        r = tk.Tk()
+        r.withdraw()
+        ultima = detalhe.strip().splitlines()[-1] if detalhe.strip() else "erro desconhecido"
+        messagebox.showerror(
+            "CSVtoPDF — erro ao abrir",
+            "O programa encontrou um erro ao abrir:\n\n"
+            f"{ultima}\n\nDetalhes completos salvos em:\n{log}")
+        r.destroy()
+    except Exception:
+        pass
+
+    try:
+        input("\nPressione Enter para sair.")
+    except EOFError:
+        pass
+    sys.exit(1)
 
 
 def _instalar_gui(pacotes, root, depois_de_instalar):
@@ -246,6 +305,9 @@ def _instalar_gui(pacotes, root, depois_de_instalar):
 
 
 def main_gui():
+    """Mostra a tela de configuração inicial (se faltar dependência) e devolve
+    True quando o app deve ser aberto em seguida. O app é aberto pelo chamador,
+    depois deste mainloop terminar — nunca aninhado num callback."""
     import tkinter as tk
     from tkinter import ttk
 
@@ -257,8 +319,7 @@ def main_gui():
     if not faltando:
         # Tudo instalado — abrir direto, sem mostrar nenhuma janela
         root.destroy()
-        _abrir_app()
-        return
+        return True
 
     root.deiconify()
     root.title("CSVtoPDF — Configuração inicial")
@@ -280,8 +341,11 @@ def main_gui():
         ttk.Label(frame, text=f"  • {p}", foreground="#333").pack(anchor="w")
     ttk.Label(frame, text="").pack()
 
+    estado = {"abrir": False}
+
     def _iniciar():
-        _instalar_gui(faltando, root, lambda: [root.destroy(), _abrir_app()])
+        _instalar_gui(faltando, root,
+                      lambda: [estado.__setitem__("abrir", True), root.destroy()])
 
     frame_btn = ttk.Frame(frame)
     frame_btn.pack()
@@ -291,6 +355,7 @@ def main_gui():
                command=root.destroy).pack(side="left", padx=6)
 
     root.mainloop()
+    return estado["abrir"]
 
 
 def main_console():
@@ -304,8 +369,7 @@ def main_console():
 
     if not faltando:
         print("Tudo instalado. Abrindo CSVtoPDF...")
-        _abrir_app()
-        return
+        return True
 
     print("Dependências a instalar:")
     for _, p in faltando:
@@ -314,7 +378,7 @@ def main_console():
     resp = input("Instalar agora? [S/n]: ").strip().lower()
     if resp in ("n", "no", "nao", "não"):
         print("Cancelado.")
-        return
+        return False
 
     print()
     erros = []
@@ -328,9 +392,9 @@ def main_console():
         print("Tente manualmente:")
         for e in erros:
             print(f"  pip install {e}" + ("" if IS_WIN else " --break-system-packages"))
-    else:
-        print("\n✓ Instalação concluída! Abrindo CSVtoPDF…")
-        _abrir_app()
+        return False
+    print("\n✓ Instalação concluída! Abrindo CSVtoPDF…")
+    return True
 
 
 if __name__ == "__main__":
@@ -347,7 +411,7 @@ if __name__ == "__main__":
 
     try:
         import tkinter  # noqa: F401
-        main_gui()
+        abrir = main_gui()
     except ImportError:
         if IS_WIN:
             # No Windows o tkinter vem no instalador oficial do Python (opção
@@ -359,4 +423,9 @@ if __name__ == "__main__":
             input("Pressione Enter para sair.")
             sys.exit(1)
         print("tkinter não disponível — usando modo console.")
-        main_console()
+        abrir = main_console()
+
+    # Abre o app só aqui, fora de qualquer mainloop/callback, para que erros
+    # de inicialização apareçam (ver _abrir_app / _erro_ao_abrir).
+    if abrir:
+        _abrir_app()

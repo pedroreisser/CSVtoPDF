@@ -9,7 +9,8 @@ build/
 dist/
 *.spec
 
-# Config local do usuário (fica em ~/.pdf_harvester_config.json, mas por segurança)
+# Config local do usuário (fica em ~/.csvtopdf_config.json, mas por segurança)
+.csvtopdf_config.json
 .pdf_harvester_config.json
 
 # Saídas de execução (caso alguém rode dentro da pasta do projeto)
@@ -17,6 +18,7 @@ pdfs/
 download_log.csv
 nao_encontrados.csv
 nao_encontrados.html
+csvtopdf_erro.txt
 
 # Editores / SO
 .claude/
