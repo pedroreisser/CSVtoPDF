@@ -44,7 +44,7 @@ echo.
 winget --version >nul 2>&1
 if !errorlevel! equ 0 (
     echo  Instalando Python via winget (usuario atual, sem admin)...
-    winget install --id Python.Python.3 --source winget ^
+    winget install --id Python.Python.3.12 -e --source winget ^
         --scope user ^
         --accept-package-agreements ^
         --accept-source-agreements ^
@@ -52,9 +52,9 @@ if !errorlevel! equ 0 (
     if !errorlevel! equ 0 (
         echo  Python instalado com sucesso!
         echo.
-        :: Recarregar PATH desta sessao
+        REM Recarregar PATH desta sessao
         call refreshenv >nul 2>&1
-        :: Tentar novamente apos instalacao
+        REM Tentar novamente apos instalacao
         python --version >nul 2>&1
         if !errorlevel! equ 0 (
             set PYTHON=python

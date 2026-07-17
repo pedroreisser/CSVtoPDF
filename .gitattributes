@@ -1,0 +1,7 @@
+# .bat precisa de quebras de linha CRLF senão o cmd.exe do Windows falha no
+# goto e a janela fecha sem mensagem. Tratar como binário (-text) garante que
+# o git preserve os bytes exatos em qualquer checkout e no ZIP do GitHub.
+*.bat -text
+
+# Scripts Python sempre com LF.
+*.py text eol=lf

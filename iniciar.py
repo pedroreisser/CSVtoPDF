@@ -7,6 +7,7 @@ Adaptado do launcher do Excerpta: instala as dependências que faltarem
 
 import importlib.util
 import os
+import queue
 import shutil
 import subprocess
 import sys
@@ -215,6 +216,11 @@ def _abrir_app():
             _erro_ao_abrir(f"O programa saiu com código {res.returncode}. "
                            "Veja a janela do programa para detalhes.")
         return
+    except Exception:
+        # Qualquer outra falha ao importar (ex.: SyntaxError) também vira erro
+        # tratado, em vez de escapar sem diálogo/log.
+        _erro_ao_abrir(traceback.format_exc())
+        return
     try:
         gui.App().mainloop()
     except Exception:
@@ -277,30 +283,46 @@ def _instalar_gui(pacotes, root, depois_de_instalar):
                   font=("TkFixedFont", 8), bg="#1e1e1e", fg="#d4d4d4")
     log.pack(padx=24, pady=(0, 16))
 
-    def _log(txt):
+    # tkinter não é thread-safe: a thread de instalação só ENFILEIRA mensagens;
+    # quem mexe nos widgets é a thread principal, consultando a fila via after().
+    fila = queue.Queue()
+
+    def _escrever(txt):
         log.config(state="normal")
         log.insert("end", txt + "\n")
         log.see("end")
         log.config(state="disabled")
-        dlg.update()
 
-    def _fim(erros):
-        barra.stop()
-        if erros:
-            _log(f"\n⚠  Falha ao instalar: {', '.join(erros)}")
-            cmd = (f"pip install {' '.join(erros)}" +
-                   ("" if IS_WIN else " --break-system-packages"))
-            root.after(0, lambda: messagebox.showwarning(
-                "Atenção",
-                f"Não foi possível instalar: {', '.join(erros)}\n\n"
-                f"Tente manualmente no terminal:\n  {cmd}"))
-        else:
-            _log("\n✅ Tudo instalado! Abrindo o CSVtoPDF…")
-            root.after(800, lambda: [dlg.destroy(), depois_de_instalar()])
+    def _consumir():
+        try:
+            while True:
+                tipo, dado = fila.get_nowait()
+                if tipo == "log":
+                    _escrever(dado)
+                elif tipo == "fim":
+                    barra.stop()
+                    if dado:  # lista de erros
+                        _escrever(f"\n⚠  Falha ao instalar: {', '.join(dado)}")
+                        cmd = (f"pip install {' '.join(dado)}" +
+                               ("" if IS_WIN else " --break-system-packages"))
+                        messagebox.showwarning(
+                            "Atenção",
+                            f"Não foi possível instalar: {', '.join(dado)}\n\n"
+                            f"Tente manualmente no terminal:\n  {cmd}")
+                    else:
+                        _escrever("\n✅ Tudo instalado! Abrindo o CSVtoPDF…")
+                        dlg.after(800, lambda: [dlg.destroy(), depois_de_instalar()])
+                    return  # "fim" encerra o polling
+        except queue.Empty:
+            pass
+        dlg.after(80, _consumir)
 
     threading.Thread(target=_instalar_pacotes,
-                     args=(pacotes, _log, _fim),
+                     args=(pacotes,
+                           lambda txt: fila.put(("log", txt)),
+                           lambda erros: fila.put(("fim", erros))),
                      daemon=True).start()
+    dlg.after(80, _consumir)
     dlg.wait_window()
 
 
