@@ -10,14 +10,14 @@ acesso aberto, usando a base Unpaywall. Nunca burla paywall — só baixa
 o que os próprios periódicos/repositórios disponibilizam legalmente.
 
 REQUISITO: Python 3.9 ou superior
-  • Windows: o "iniciar.bat" instala sozinho se não tiver
+  • Windows: o "Instalar dependências (Windows 11).bat" instala sozinho se não tiver
   • Linux/Mac: normalmente já vem instalado
 
 
 COMO INICIAR
 ────────────
 Windows:
-  Dê duplo clique em "iniciar.bat"
+  Dê duplo clique em "Instalar dependências (Windows 11).bat"
   O programa instala o que precisar automaticamente na primeira vez.
 
 Linux:

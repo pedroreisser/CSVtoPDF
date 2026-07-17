@@ -8,7 +8,7 @@ TXT bruto do WoS).
 
 **Jeito fácil** (instala dependências sozinho na primeira vez, sem admin):
 
-- **Windows**: duplo clique em `iniciar.bat` (instala até o Python, se faltar)
+- **Windows**: duplo clique em `Instalar dependências (Windows 11).bat` (instala até o Python, se faltar)
 - **Linux/Mac**: `python3 iniciar.py`
 
 **Jeito manual**:
@@ -48,7 +48,7 @@ Instruções para usuários leigos em `INSTRUCOES.txt`.
 - `gui.py` — interface tkinter, roda o download numa thread separada e recebe o
   progresso via `queue.Queue`.
 - `app.py` — ponto de entrada.
-- `iniciar.py` / `iniciar.bat` — launchers com instalação automática de
+- `iniciar.py` / `Instalar dependências (Windows 11).bat` — launchers com instalação automática de
   dependências (adaptados do Excerpta).
 
 ## Observações
