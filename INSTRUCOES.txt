@@ -1,5 +1,5 @@
 =====================================================
-  PDF HARVESTER — Download de artigos em acesso aberto
+  CSVtoPDF — Download de artigos em acesso aberto
 =====================================================
 
 O QUE FAZ
@@ -32,7 +32,7 @@ Mac:
 NA PRIMEIRA EXECUÇÃO
 ────────────────────
 O programa instala sozinho a única dependência necessária (requests,
-poucos MB) e já abre o PDF Harvester. Nada requer permissão de
+poucos MB) e já abre o CSVtoPDF. Nada requer permissão de
 administrador.
 
 

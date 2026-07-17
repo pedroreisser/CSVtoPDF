@@ -1,4 +1,4 @@
-# PDF Harvester
+# CSVtoPDF
 
 Baixa automaticamente PDFs de acesso aberto (via [Unpaywall](https://unpaywall.org/)) a
 partir de uma lista de artigos exportada do Scopus ou Web of Science (CSV limpo ou
@@ -55,4 +55,4 @@ Instruções para usuários leigos em `INSTRUCOES.txt`.
 
 - O app nunca tenta contornar paywall — só baixa links que a própria Unpaywall
   retorna como acesso aberto.
-- O e-mail informado é salvo em `~/.pdf_harvester_config.json` para a próxima sessão.
+- O e-mail informado é salvo em `~/.csvtopdf_config.json` para a próxima sessão.

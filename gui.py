@@ -47,7 +47,7 @@ def _pasta_area_trabalho():
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("PDF Harvester")
+        self.title("CSVtoPDF")
         self.minsize(760, 620)
         self.geometry("820x840")
         self.configure(bg=COLORS["bg"])
@@ -265,14 +265,14 @@ class App(tk.Tk):
             nome = Path(paths[0]).name
         else:
             nome = f"{len(paths)} arquivos"
-        self.title(f"PDF Harvester — {nome}")
+        self.title(f"CSVtoPDF — {nome}")
         self.lbl_file.configure(text=nome)
 
         carregados, erros_leitura = [], []
         for p in paths:
             try:
-                header, rows, delim, doi_col, title_col = dl.read_file(p)
-                carregados.append((Path(p).name, header, rows, doi_col, title_col))
+                header, rows, delim, doi_col, title_col, year_col = dl.read_file(p)
+                carregados.append((Path(p).name, header, rows, doi_col, title_col, year_col))
             except Exception as e:
                 erros_leitura.append(f"{Path(p).name}: {e}")
 
@@ -296,7 +296,7 @@ class App(tk.Tk):
             if sem_colunas:
                 nomes = ", ".join(c[0] for c in sem_colunas)
                 avisos.append(f"⚠ Ignorado(s) por colunas não identificadas: {nomes}")
-            self._load_articles([(h, r, dc, tc) for _, h, r, dc, tc in detectados],
+            self._load_articles([(h, r, dc, tc, yc) for _, h, r, dc, tc, yc in detectados],
                                  len(detectados), avisos)
         elif len({tuple(c[1]) for c in sem_colunas}) == 1:
             # Nenhum detectado, mas todos têm o mesmo cabeçalho: fallback manual
@@ -326,15 +326,17 @@ class App(tk.Tk):
             messagebox.showwarning("Colunas incompletas", "Selecione a coluna de DOI e a de Título.")
             return
         doi_col, title_col = self.header.index(doi_name), self.header.index(title_name)
-        self._load_articles([(h, r, doi_col, title_col) for _, h, r, _, _ in self._pending_manual],
+        # year_col vem do que foi autodetectado em cada arquivo (índice 5), mesmo
+        # que DOI/título tenham exigido escolha manual.
+        self._load_articles([(h, r, doi_col, title_col, yc) for _, h, r, _, _, yc in self._pending_manual],
                              len(self._pending_manual), [])
         self._update_start_button()
 
     def _load_articles(self, file_infos, n_arquivos, avisos):
-        """file_infos: lista de (header, rows, doi_col, title_col) já resolvidos."""
+        """file_infos: lista de (header, rows, doi_col, title_col, year_col) resolvidos."""
         artigos = []
-        for header, rows, doi_col, title_col in file_infos:
-            artigos.extend(dl.extract_articles(rows, doi_col, title_col))
+        for header, rows, doi_col, title_col, year_col in file_infos:
+            artigos.extend(dl.extract_articles(rows, doi_col, title_col, year_col))
         self.articles, duplicados = dl.dedupe_articles(artigos)
         # Marca as colunas como resolvidas (habilita o botão Iniciar); os índices
         # por arquivo já foram aplicados em extract_articles.
@@ -346,9 +348,11 @@ class App(tk.Tk):
         if n_arquivos > 1:
             partes[0] += f" de {n_arquivos} arquivo(s)"
         else:
-            header, _, doi_col, title_col = file_infos[0]
+            header, _, doi_col, title_col, year_col = file_infos[0]
             partes.append(f"DOI: coluna '{header[doi_col]}'")
             partes.append(f"Título: coluna '{header[title_col]}'")
+            if year_col is not None:
+                partes.append(f"Ano: coluna '{header[year_col]}'")
         partes.append(f"{valid_dois} com DOI válido")
         if duplicados:
             partes.append(f"{duplicados} duplicado(s) removido(s)")

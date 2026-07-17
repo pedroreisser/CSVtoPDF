@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PDF Harvester — launcher universal (Linux e Windows). Não requer administrador.
+"""CSVtoPDF — launcher universal (Linux e Windows). Não requer administrador.
 
 Adaptado do launcher do Excerpta: instala as dependências que faltarem
 (com janela de progresso) e abre o programa.
@@ -30,7 +30,7 @@ PKG_MANAGERS = [
     ("pacman",  ["pacman", "-S", "--noconfirm"],            "tk",              "python-pip"),
     ("apk",     ["apk", "add"],                             "python3-tkinter", "py3-pip"),
 ]
-_ENV_JA_TENTOU = "_PDFHARVESTER_TENTOU_INSTALAR_SO"
+_ENV_JA_TENTOU = "_CSVTOPDF_TENTOU_INSTALAR_SO"
 
 
 def _pip_flags():
@@ -114,7 +114,7 @@ def _garantir_tk_e_pip():
         input("Pressione Enter para sair.")
         return False
 
-    print("\n✓ Pacotes do sistema instalados. Reiniciando o PDF Harvester...\n")
+    print("\n✓ Pacotes do sistema instalados. Reiniciando o CSVtoPDF...\n")
     os.environ[_ENV_JA_TENTOU] = "1"
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
@@ -134,11 +134,11 @@ def _configurar_atalho():
     try:
         pasta_apps = os.path.expanduser("~/.local/share/applications")
         os.makedirs(pasta_apps, exist_ok=True)
-        atalho = os.path.join(pasta_apps, "pdf-harvester.desktop")
+        atalho = os.path.join(pasta_apps, "csvtopdf.desktop")
         conteudo = (
             "[Desktop Entry]\n"
             "Type=Application\n"
-            "Name=PDF Harvester\n"
+            "Name=CSVtoPDF\n"
             "Comment=Baixa PDFs de artigos em acesso aberto (Unpaywall)\n"
             f'Exec={sys.executable} "{os.path.abspath(__file__)}"\n'
             "Icon=document-save\n"
@@ -236,7 +236,7 @@ def _instalar_gui(pacotes, root, depois_de_instalar):
                 f"Não foi possível instalar: {', '.join(erros)}\n\n"
                 f"Tente manualmente no terminal:\n  {cmd}"))
         else:
-            _log("\n✅ Tudo instalado! Abrindo o PDF Harvester…")
+            _log("\n✅ Tudo instalado! Abrindo o CSVtoPDF…")
             root.after(800, lambda: [dlg.destroy(), depois_de_instalar()])
 
     threading.Thread(target=_instalar_pacotes,
@@ -261,13 +261,13 @@ def main_gui():
         return
 
     root.deiconify()
-    root.title("PDF Harvester — Configuração inicial")
+    root.title("CSVtoPDF — Configuração inicial")
     root.resizable(False, False)
 
     frame = ttk.Frame(root, padding=28)
     frame.pack()
 
-    ttk.Label(frame, text="PDF Harvester",
+    ttk.Label(frame, text="CSVtoPDF",
               font=("TkDefaultFont", 14, "bold")).pack(pady=(0, 2))
     ttk.Label(frame,
               text="Baixa PDFs de artigos em acesso aberto (Unpaywall)",
@@ -296,14 +296,14 @@ def main_gui():
 def main_console():
     """Fallback sem tkinter (Linux sem python3-tk instalado)."""
     print("=" * 52)
-    print("  PDF Harvester — Configuração inicial")
+    print("  CSVtoPDF — Configuração inicial")
     print("=" * 52)
     print()
 
     faltando = checar_faltando(DEPS_OBRIGATORIAS)
 
     if not faltando:
-        print("Tudo instalado. Abrindo PDF Harvester...")
+        print("Tudo instalado. Abrindo CSVtoPDF...")
         _abrir_app()
         return
 
@@ -329,13 +329,13 @@ def main_console():
         for e in erros:
             print(f"  pip install {e}" + ("" if IS_WIN else " --break-system-packages"))
     else:
-        print("\n✓ Instalação concluída! Abrindo PDF Harvester…")
+        print("\n✓ Instalação concluída! Abrindo CSVtoPDF…")
         _abrir_app()
 
 
 if __name__ == "__main__":
     if sys.version_info < (3, 9):
-        print(f"PDF Harvester requer Python 3.9+. Versão atual: {sys.version}")
+        print(f"CSVtoPDF requer Python 3.9+. Versão atual: {sys.version}")
         print("Baixe a versão mais recente em: https://python.org/downloads")
         input("Pressione Enter para sair.")
         sys.exit(1)

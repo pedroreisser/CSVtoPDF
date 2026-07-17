@@ -1,11 +1,11 @@
 @echo off
 setlocal enabledelayedexpansion
-title PDF Harvester
+title CSVtoPDF
 cd /d "%~dp0"
 
 echo.
 echo  ================================================
-echo  PDF Harvester - Download de artigos em acesso aberto
+echo  CSVtoPDF - Download de artigos em acesso aberto
 echo  ================================================
 echo.
 echo  Nao e necessario ser administrador.
@@ -128,14 +128,14 @@ exit /b 1
 :: ── 4. Atualizar pip silenciosamente ─────────────────────────────────────────
 !PYTHON! -m pip install --upgrade pip --user --quiet 2>nul
 
-:: ── 5. Abrir o launcher do PDF Harvester ─────────────────────────────────────
+:: ── 5. Abrir o launcher do CSVtoPDF ─────────────────────────────────────
 echo.
-echo  Iniciando PDF Harvester...
+echo  Iniciando CSVtoPDF...
 echo.
 !PYTHON! iniciar.py
 if !errorlevel! neq 0 (
     echo.
-    echo  Ocorreu um erro ao iniciar o PDF Harvester.
+    echo  Ocorreu um erro ao iniciar o CSVtoPDF.
     echo  Tente executar manualmente no terminal:
     echo    python iniciar.py
     echo.
