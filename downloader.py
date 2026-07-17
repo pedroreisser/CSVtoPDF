@@ -258,7 +258,7 @@ def build_not_found_html(rows):
 
     rows: lista de dicts com 'doi', 'title' e (opcional) 'year'/'detail'.
     O DOI vira link para https://doi.org/<doi> — abra este arquivo no navegador
-    já logado no acesso institucional (ex.: CAFe) e baixe manualmente.
+    já logado no acesso institucional e baixe manualmente.
     Clicar num cabeçalho ordena a tabela por aquela coluna (ex.: Ano).
     """
     tem_ano = any(r.get("year") for r in rows)
@@ -365,7 +365,7 @@ _HTML_TEMPLATE = """<!doctype html>
 <body>
 <h1>Artigos não baixados</h1>
 <p class="sub">{total} artigo(s) sem versão em acesso aberto. Clique no DOI para abrir
-no navegador — se estiver logado no acesso institucional (ex.: CAFe), o PDF abre direto.<br>
+no navegador — se estiver logado no acesso institucional, o PDF abre direto.<br>
 Ao clicar num DOI, a linha é marcada como aberta (✓) e o progresso fica salvo neste
 navegador. Você também pode marcar/desmarcar manualmente.
 Clique num cabeçalho (ex.: <b>Ano</b>) para ordenar. <span id="contador"></span></p>
