@@ -49,7 +49,11 @@ class App(tk.Tk):
         super().__init__()
         self.title("CSVtoPDF")
         self.minsize(760, 620)
-        self.geometry("820x840")
+        # Abre com a altura cheia da tela (só na vertical; largura normal), no topo,
+        # para que todos os botões apareçam sem precisar redimensionar a janela.
+        altura = self.winfo_screenheight() - 70  # desconta painel/barra e decorações
+        x = max((self.winfo_screenwidth() - 820) // 2, 0)
+        self.geometry(f"820x{altura}+{x}+0")
         self.configure(bg=COLORS["bg"])
 
         style = ttk.Style(self)
