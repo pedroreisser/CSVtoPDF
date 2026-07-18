@@ -375,7 +375,13 @@ class App(tk.Tk):
             inicio = inicio.parent  # pasta "pdfs" padrão ainda não criada
         path = filedialog.askdirectory(initialdir=inicio)
         if path:
-            self.dest_var.set(path)
+            escolhida = Path(path)
+            # Os PDFs sempre vão para uma subpasta "pdfs" da pasta escolhida
+            # (evita jogar arquivos soltos na pasta do usuário). Não duplica se
+            # a própria pasta escolhida já for "pdfs".
+            if escolhida.name.lower() != "pdfs":
+                escolhida = escolhida / "pdfs"
+            self.dest_var.set(str(escolhida))
 
     # ---------- config persistence ----------
 
