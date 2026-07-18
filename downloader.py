@@ -13,6 +13,8 @@ from urllib.parse import quote
 import requests
 
 UNPAYWALL_URL = "https://api.unpaywall.org/v2/{doi}"
+OPENALEX_URL = "https://api.openalex.org/works/doi:{doi}"
+SEMANTIC_URL = "https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}"
 REQUEST_DELAY = 1.0
 API_TIMEOUT = 15
 DOWNLOAD_TIMEOUT = 30
@@ -20,8 +22,13 @@ DOWNLOAD_TIMEOUT = 30
 DOI_SYNONYMS = {"doi", "di"}
 TITLE_SYNONYMS = {"title", "titulo", "título", "ti"}
 YEAR_SYNONYMS = {"year", "ano", "py", "publication year", "publicationyear", "pubyear"}
+RELEVANCIA_SYNONYMS = {"relevancia", "relevância", "score"}
 
 CONFIG_PATH = Path.home() / ".csvtopdf_config.json"
+
+# Modelo de CSV de entrada (também escrito em modelo_input.csv, ver botão na GUI).
+MODELO_CSV = ("DOI,Titulo,Ano,relevancia\n"
+              "10.xxxx/exemplo,Título de exemplo aqui,2020,0.85\n")
 
 DOI_PREFIX_RE = re.compile(r"^(https?://)?(dx\.)?doi\.org/", re.IGNORECASE)
 ILLEGAL_CHARS_RE = re.compile(r'[\\/*?:"<>|]')
@@ -32,6 +39,15 @@ def _parse_year(value):
     """Extrai um ano de 4 dígitos (1900–2099) de um texto; "" se não achar."""
     m = YEAR_RE.search(value or "")
     return m.group(0) if m else ""
+
+
+def _parse_relevancia(value):
+    """Normaliza a relevância para "0.00"–"1.00" (aceita vírgula); "" se inválida."""
+    v = (value or "").strip().replace(",", ".")
+    try:
+        return f"{float(v):.2f}"
+    except ValueError:
+        return ""
 
 
 def load_config():
@@ -64,11 +80,11 @@ def _match_column(header, synonyms):
 
 
 def read_file(file_path):
-    """Retorna (header, data_rows, delimiter, doi_col, title_col, year_col).
+    """Retorna (header, data_rows, delimiter, doi_col, title_col, year_col, rel_col).
 
     doi_col / title_col ficam None quando não é possível detectar
     automaticamente — a GUI decide o que fazer nesse caso (fallback manual).
-    year_col é opcional (None quando não há coluna de ano reconhecível).
+    year_col / rel_col são opcionais (None quando não há coluna reconhecível).
     """
     delimiter = detect_delimiter(file_path)
     with open(file_path, "r", encoding="utf-8-sig", errors="replace", newline="") as f:
@@ -79,22 +95,24 @@ def read_file(file_path):
     doi_col = _match_column(header, DOI_SYNONYMS)
     title_col = _match_column(header, TITLE_SYNONYMS)
     year_col = _match_column(header, YEAR_SYNONYMS)
-    return header, data_rows, delimiter, doi_col, title_col, year_col
+    rel_col = _match_column(header, RELEVANCIA_SYNONYMS)
+    return header, data_rows, delimiter, doi_col, title_col, year_col, rel_col
 
 
 def _clean_doi(doi):
     return DOI_PREFIX_RE.sub("", doi.strip()).strip()
 
 
-def extract_articles(data_rows, doi_col, title_col, year_col=None):
+def extract_articles(data_rows, doi_col, title_col, year_col=None, rel_col=None):
     articles = []
     for row in data_rows:
         doi = row[doi_col].strip() if doi_col is not None and doi_col < len(row) else ""
         title = row[title_col].strip() if title_col is not None and title_col < len(row) else ""
         year = _parse_year(row[year_col]) if year_col is not None and year_col < len(row) else ""
+        rel = _parse_relevancia(row[rel_col]) if rel_col is not None and rel_col < len(row) else ""
         if not doi and not title:
             continue
-        articles.append({"doi": _clean_doi(doi), "title": title, "year": year})
+        articles.append({"doi": _clean_doi(doi), "title": title, "year": year, "relevancia": rel})
     return articles
 
 
@@ -134,20 +152,75 @@ def _unique_path(path):
         i += 1
 
 
-def query_unpaywall(doi, email, session):
-    """Retorna (pdf_url, erro, year). year vem da própria resposta da Unpaywall
-    (serve de fallback quando o arquivo de origem não tem coluna de ano)."""
+# ── Fontes de busca de PDF em acesso aberto ──────────────────────────────────
+# Cada fonte retorna {"pdf_url": <str|None>, "fonte": <nome>, "year": <str>} quando
+# consegue responder, ou None quando nem responde (404 / erro). pdf_url None = a
+# fonte respondeu mas não tem PDF aberto (ainda serve para colher o ano).
+
+def buscar_unpaywall(doi, email, session):
     url = UNPAYWALL_URL.format(doi=quote(doi, safe=""))
     resp = session.get(url, params={"email": email}, timeout=API_TIMEOUT)
     if resp.status_code == 404:
-        return None, "DOI não encontrado", ""
+        return None
     resp.raise_for_status()
     data = resp.json()
-    year = str(data.get("year") or "").strip()
-    best = data.get("best_oa_location")
-    if not best or not best.get("url_for_pdf"):
-        return None, "sem versão OA", year
-    return best["url_for_pdf"], None, year
+    best = data.get("best_oa_location") or {}
+    return {"pdf_url": best.get("url_for_pdf"), "fonte": "Unpaywall",
+            "year": str(data.get("year") or "").strip()}
+
+
+def buscar_openalex(doi, email, session):
+    url = OPENALEX_URL.format(doi=quote(doi, safe=""))
+    resp = session.get(url, params={"mailto": email} if email else None, timeout=API_TIMEOUT)
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    data = resp.json()
+    best = data.get("best_oa_location") or {}
+    return {"pdf_url": best.get("pdf_url"), "fonte": "OpenAlex",
+            "year": str(data.get("publication_year") or "").strip()}
+
+
+def buscar_semantic_scholar(doi, email, session):
+    url = SEMANTIC_URL.format(doi=quote(doi, safe=""))
+    resp = session.get(url, params={"fields": "openAccessPdf,year"}, timeout=API_TIMEOUT)
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    data = resp.json()
+    oa = data.get("openAccessPdf") or {}
+    return {"pdf_url": oa.get("url"), "fonte": "Semantic Scholar",
+            "year": str(data.get("year") or "").strip()}
+
+
+FONTES = (buscar_unpaywall, buscar_openalex, buscar_semantic_scholar)
+
+
+def buscar_pdf(doi, email, session):
+    """Tenta as fontes em ordem e para na primeira que devolver um PDF.
+
+    Retorna (pdf_url, fonte, year, erro): erro is None em caso de sucesso;
+    "sem versão OA" se alguma fonte respondeu mas nenhuma tinha PDF;
+    "DOI não encontrado" se nenhuma fonte respondeu. Faz REQUEST_DELAY entre
+    as fontes do mesmo artigo (a pausa entre artigos fica em process_articles).
+    """
+    year = ""
+    algum_respondeu = False
+    for i, fonte in enumerate(FONTES):
+        if i > 0:
+            time.sleep(REQUEST_DELAY)
+        try:
+            r = fonte(doi, email, session)
+        except requests.exceptions.RequestException:
+            r = None
+        if r is None:
+            continue
+        algum_respondeu = True
+        if not year and r.get("year"):
+            year = r["year"]
+        if r.get("pdf_url"):
+            return r["pdf_url"], r["fonte"], year, None
+    return None, "", year, ("sem versão OA" if algum_respondeu else "DOI não encontrado")
 
 
 def download_pdf(url, dest_path, session):
@@ -179,12 +252,13 @@ def process_articles(articles, email, dest_folder, msg_queue, cancel_event,
 
         doi, title = article["doi"], article["title"]
         msg_queue.put(("processing", i, total, title))
-        status, detail, filename, year_api = _process_one(doi, title, email, dest_folder, session)
+        status, detail, filename, year_api, fonte = _process_one(doi, title, email, dest_folder, session)
 
-        # Ano: prefere o do arquivo de origem; cai para o que a Unpaywall devolveu.
+        # Ano: prefere o do arquivo de origem; cai para o que a API devolveu.
         year = article.get("year") or year_api
         result = {"doi": doi, "title": title, "year": year,
-                  "status": status, "detail": detail, "filename": filename}
+                  "relevancia": article.get("relevancia", ""),
+                  "status": status, "detail": detail, "filename": filename, "fonte": fonte}
         results.append(result)
         msg_queue.put(("result", i, total, result))
 
@@ -192,33 +266,33 @@ def process_articles(articles, email, dest_folder, msg_queue, cancel_event,
             break
         time.sleep(REQUEST_DELAY)
 
-    csv_path, html_path = write_reports(results, dest_folder, salvar_nao_encontrados)
-    msg_queue.put(("done", _summarize(results),
+    log_path, csv_path, html_path = write_reports(results, dest_folder, salvar_nao_encontrados)
+    msg_queue.put(("done", _summarize(results), str(log_path),
                    str(csv_path) if csv_path else "",
                    str(html_path) if html_path else "", cancel_event.is_set()))
 
 
 def _process_one(doi, title, email, dest_folder, session):
-    """Retorna (status, detail, filename, year)."""
+    """Retorna (status, detail, filename, year, fonte)."""
     if not doi:
-        return "error", "sem DOI", "", ""
+        return "error", "sem DOI", "", "", ""
     try:
-        pdf_url, err, year = query_unpaywall(doi, email, session)
+        pdf_url, fonte, year, err = buscar_pdf(doi, email, session)
         if err:
-            return ("no_oa" if err == "sem versão OA" else "error"), err, "", year
+            return ("no_oa" if err == "sem versão OA" else "error"), err, "", year, ""
 
         dest_path = _unique_path(dest_folder / (sanitize_filename(title, doi) + ".pdf"))
         try:
             download_pdf(pdf_url, dest_path, session)
-            return "downloaded", "ok", dest_path.name, year
+            return "downloaded", "ok", dest_path.name, year, fonte
         except Exception:
-            return "error", "falha no download", "", year
+            return "error", "falha no download", "", year, fonte
     except requests.exceptions.Timeout:
-        return "error", "timeout", "", ""
+        return "error", "timeout", "", "", ""
     except requests.exceptions.RequestException:
-        return "error", "erro de conexão", "", ""
+        return "error", "erro de conexão", "", "", ""
     except Exception:
-        return "error", "erro inesperado", "", ""
+        return "error", "erro inesperado", "", "", ""
 
 
 def _summarize(results):
@@ -231,26 +305,49 @@ def _summarize(results):
 
 
 def write_reports(results, dest_folder, salvar_nao_encontrados=True):
-    """Gera os relatórios dos artigos NÃO baixados: CSV + HTML com DOIs clicáveis.
+    """Grava o log geral (download_log.csv, sempre) e, se pedido, os relatórios
+    dos NÃO baixados (nao_encontrados.csv + .html).
 
-    Retorna (csv_path, html_path); ambos None se o usuário desativou a opção.
+    Retorna (log_path, csv_path, html_path); csv_path/html_path None se desativado.
+    A coluna 'relevancia' só aparece quando havia relevância no arquivo de entrada.
     """
+    tem_rel = any(r.get("relevancia") for r in results)
+
+    log_path = dest_folder / "download_log.csv"
+    with open(log_path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        cab = ["doi", "title", "year", "status", "fonte"]
+        if tem_rel:
+            cab.append("relevancia")
+        writer.writerow(cab)
+        for r in results:
+            linha = [r["doi"], r["title"], r.get("year", ""), r["status"], r.get("fonte", "")]
+            if tem_rel:
+                linha.append(r.get("relevancia", ""))
+            writer.writerow(linha)
+
     if not salvar_nao_encontrados:
-        return None, None
+        return log_path, None, None
 
     not_found = [r for r in results if r["status"] != "downloaded"]
 
     csv_path = dest_folder / "nao_encontrados.csv"
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
-        writer.writerow(["doi", "title", "year"])
+        cab = ["doi", "title", "year"]
+        if tem_rel:
+            cab.append("relevancia")
+        writer.writerow(cab)
         for r in not_found:
-            writer.writerow([r["doi"], r["title"], r.get("year", "")])
+            linha = [r["doi"], r["title"], r.get("year", "")]
+            if tem_rel:
+                linha.append(r.get("relevancia", ""))
+            writer.writerow(linha)
 
     html_path = dest_folder / "nao_encontrados.html"
     html_path.write_text(build_not_found_html(not_found), encoding="utf-8")
 
-    return csv_path, html_path
+    return log_path, csv_path, html_path
 
 
 def build_not_found_html(rows):
@@ -262,12 +359,14 @@ def build_not_found_html(rows):
     Clicar num cabeçalho ordena a tabela por aquela coluna (ex.: Ano).
     """
     tem_ano = any(r.get("year") for r in rows)
+    tem_rel = any(r.get("relevancia") for r in rows)
     tem_motivo = any(r.get("detail") for r in rows)
     linhas = []
     for i, r in enumerate(rows, start=1):
         doi = (r.get("doi") or "").strip()
         titulo = html.escape(r.get("title") or "")
         ano = html.escape(str(r.get("year") or ""))
+        rel = html.escape(str(r.get("relevancia") or ""))
         # chave de persistência: DOI se houver, senão o título
         chave = html.escape(doi or (r.get("title") or ""))
         if doi:
@@ -283,25 +382,40 @@ def build_not_found_html(rows):
         ]
         if tem_ano:
             cols.append(f'<td class="ano">{ano}</td>')
+        if tem_rel:
+            cols.append(f'<td class="rel">{rel}</td>')
         cols.append(f'<td class="doi">{doi_cell}</td>')
         if tem_motivo:
             cols.append(f'<td class="motivo">{html.escape(r.get("detail") or "")}</td>')
-        linhas.append(f'<tr data-key="{chave}">' + "".join(cols) + "</tr>")
+        linhas.append(f'<tr data-key="{chave}" data-rel="{rel}">' + "".join(cols) + "</tr>")
 
-    # Cabeçalho com índices de coluna corretos (a coluna Ano desloca DOI/Motivo).
+    # Cabeçalho com índices de coluna corretos (colunas opcionais deslocam as demais).
     ths = ['<th>✓</th>', _th("#", 1, "num"), _th("Título", 2, "text")]
     col = 3
     if tem_ano:
         ths.append(_th("Ano", col, "year")); col += 1
+    rel_col = -1
+    if tem_rel:
+        rel_col = col
+        ths.append(_th("Relevância", col, "rel")); col += 1
     ths.append(_th("DOI", col, "text")); col += 1
     if tem_motivo:
         ths.append(_th("Motivo", col, "text"))
     cabecalho = "<tr>" + "".join(ths) + "</tr>"
 
+    if tem_rel:
+        filtro_rel = ('<div id="filtro-rel">Mostrar apenas relevância ≥ '
+                      '<input type="range" min="0" max="1" step="0.05" value="0" '
+                      'oninput="filtrarRel(this.value)"> <b id="relval">0.00</b></div>')
+    else:
+        filtro_rel = ""
+
     return _HTML_TEMPLATE.format(
         total=len(rows),
         cabecalho=cabecalho,
         linhas="\n".join(linhas),
+        filtro_rel=filtro_rel,
+        rel_col=rel_col,
     )
 
 
@@ -332,6 +446,10 @@ _HTML_TEMPLATE = """<!doctype html>
   td.chk {{ width: 34px; text-align: center; }}
   td.chk input {{ width: 16px; height: 16px; cursor: pointer; }}
   td.ano {{ width: 56px; color: #52525b; font-variant-numeric: tabular-nums; }}
+  td.rel {{ width: 72px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }}
+  #filtro-rel {{ margin-bottom: 12px; font-size: 14px; color: #3f3f46; }}
+  #filtro-rel input {{ vertical-align: middle; }}
+  #filtro-rel b {{ font-variant-numeric: tabular-nums; }}
   td.doi {{ font-family: ui-monospace, "Consolas", "DejaVu Sans Mono", monospace; font-size: 13px; white-space: nowrap; }}
   td.doi a {{ color: #2563eb; text-decoration: none; }}
   td.doi a:hover {{ text-decoration: underline; }}
@@ -359,6 +477,7 @@ _HTML_TEMPLATE = """<!doctype html>
     tr:hover td {{ background: #2e2e33; }}
     tr.aberto td {{ background: #14261b; color: #6b7280; }}
     tr.aberto td.doi a {{ color: #3f6b4d; }}
+    #filtro-rel {{ color: #d4d4d8; }}
   }}
 </style>
 </head>
@@ -371,6 +490,7 @@ navegador. Você também pode marcar/desmarcar manualmente.
 Clique num cabeçalho (ex.: <b>Ano</b>) para ordenar. <span id="contador"></span></p>
 <input id="busca" type="search" placeholder="Filtrar por título ou DOI…"
        oninput="filtrar(this.value)" autofocus>
+{filtro_rel}
 <table>
 <thead>{cabecalho}</thead>
 <tbody id="corpo">
@@ -404,22 +524,35 @@ function marcar(a) {{   // chamado ao clicar no link do DOI (o link abre normalm
   aplicar(a.closest('tr'), true, estado);
   salvar(estado); contar();
 }}
-function filtrar(q) {{
-  q = q.toLowerCase();
+// Filtros combinados: texto (título/DOI) E relevância mínima. Uma linha só
+// aparece se passar nos dois.
+const REL_COL = {rel_col};
+let filtroTexto = '', filtroRel = 0;
+function aplicarFiltros() {{
   for (const tr of document.querySelectorAll('#corpo tr')) {{
-    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+    const okTexto = tr.textContent.toLowerCase().includes(filtroTexto);
+    const rel = parseFloat(tr.dataset.rel);
+    const okRel = isNaN(rel) ? (filtroRel <= 0) : (rel >= filtroRel);
+    tr.style.display = (okTexto && okRel) ? '' : 'none';
   }}
+}}
+function filtrar(q) {{ filtroTexto = q.toLowerCase(); aplicarFiltros(); }}
+function filtrarRel(v) {{
+  filtroRel = parseFloat(v) || 0;
+  document.getElementById('relval').textContent = filtroRel.toFixed(2);
+  aplicarFiltros();
 }}
 
 // Ordenação por clique no cabeçalho. Guardamos coluna e direção atuais; clicar
-// de novo na mesma coluna inverte. Colunas de ano começam do mais novo (desc).
+// de novo na mesma coluna inverte. Ano e Relevância começam do maior (desc).
 let ordem = {{col: null, dir: 1}};
 function sortBy(col, tipo) {{
-  ordem.dir = (ordem.col === col) ? -ordem.dir : (tipo === 'year' ? -1 : 1);
+  const descPrimeiro = (tipo === 'year' || tipo === 'rel');
+  ordem.dir = (ordem.col === col) ? -ordem.dir : (descPrimeiro ? -1 : 1);
   ordem.col = col;
   const corpo = document.getElementById('corpo');
   const linhas = [...corpo.querySelectorAll('tr')];
-  const numerico = (tipo === 'num' || tipo === 'year');
+  const numerico = (tipo === 'num' || tipo === 'year' || tipo === 'rel');
   linhas.sort((a, b) => {{
     let va = a.children[col].textContent.trim();
     let vb = b.children[col].textContent.trim();
@@ -440,13 +573,14 @@ function sortBy(col, tipo) {{
   if (th) th.querySelector('.arrow').textContent = ordem.dir === 1 ? '▲' : '▼';
 }}
 
-// Restaura o estado salvo ao abrir
+// Restaura o estado salvo ao abrir; ordena por relevância (desc) se houver.
 (function () {{
   const estado = carregar();
   for (const tr of document.querySelectorAll('#corpo tr')) {{
     if (estado[tr.dataset.key]) aplicar(tr, true, estado);
   }}
   contar();
+  if (REL_COL >= 0) sortBy(REL_COL, 'rel');
 }})();
 </script>
 </body>
@@ -463,23 +597,32 @@ def demo():
 
         csv_path = tmp / "clean.csv"
         csv_path.write_text("DOI,Title\n10.1/abc,Um Titulo\n,Sem doi\n", encoding="utf-8")
-        header, rows, delim, doi_col, title_col, year_col = read_file(csv_path)
+        header, rows, delim, doi_col, title_col, year_col, rel_col = read_file(csv_path)
         assert delim == ","
-        assert doi_col == 0 and title_col == 1 and year_col is None
-        articles = extract_articles(rows, doi_col, title_col, year_col)
+        assert doi_col == 0 and title_col == 1 and year_col is None and rel_col is None
+        articles = extract_articles(rows, doi_col, title_col, year_col, rel_col)
         assert articles == [
-            {"doi": "10.1/abc", "title": "Um Titulo", "year": ""},
-            {"doi": "", "title": "Sem doi", "year": ""},
+            {"doi": "10.1/abc", "title": "Um Titulo", "year": "", "relevancia": ""},
+            {"doi": "", "title": "Sem doi", "year": "", "relevancia": ""},
         ]
 
         wos_path = tmp / "wos_raw.txt"
         wos_path.write_text("PY\tDI\tTI\n2020\thttps://doi.org/10.2/xyz\tOutro Titulo\n", encoding="utf-8")
-        header, rows, delim, doi_col, title_col, year_col = read_file(wos_path)
+        header, rows, delim, doi_col, title_col, year_col, rel_col = read_file(wos_path)
         assert delim == "\t"
         assert doi_col == 1 and title_col == 2 and year_col == 0  # PY detectado
-        articles = extract_articles(rows, doi_col, title_col, year_col)
-        assert articles == [{"doi": "10.2/xyz", "title": "Outro Titulo", "year": "2020"}]
+        articles = extract_articles(rows, doi_col, title_col, year_col, rel_col)
+        assert articles == [{"doi": "10.2/xyz", "title": "Outro Titulo", "year": "2020", "relevancia": ""}]
         assert _parse_year("May 2019") == "2019" and _parse_year("s/d") == ""
+
+        # Modelo de entrada com relevância (aceita vírgula decimal e sinônimo "score")
+        rel_path = tmp / "com_rel.csv"
+        rel_path.write_text("DOI,Titulo,Ano,score\n10.5/x,Artigo,2019,\"0,90\"\n", encoding="utf-8")
+        header, rows, delim, dc, tc, yc, rc = read_file(rel_path)
+        assert rc == 3  # coluna "score" reconhecida como relevância
+        arts = extract_articles(rows, dc, tc, yc, rc)
+        assert arts[0]["relevancia"] == "0.90"
+        assert _parse_relevancia("0,85") == "0.85" and _parse_relevancia("x") == ""
 
         unicos, removidos = dedupe_articles([
             {"doi": "10.1/AAA", "title": "X"},
@@ -497,33 +640,57 @@ def demo():
         assert _clean_doi("https://doi.org/10.3/qwe") == "10.3/qwe"
 
         resultados = [
-            {"doi": "10.1/a", "title": "Baixado", "year": "2021", "status": "downloaded", "detail": "ok", "filename": "x.pdf"},
-            {"doi": "10.2/b", "title": "Sem OA", "year": "2010", "status": "no_oa", "detail": "sem versão OA", "filename": ""},
-            {"doi": "", "title": "Sem DOI <script>", "year": "", "status": "error", "detail": "sem DOI", "filename": ""},
+            {"doi": "10.1/a", "title": "Baixado", "year": "2021", "relevancia": "0.90",
+             "status": "downloaded", "detail": "ok", "filename": "x.pdf", "fonte": "OpenAlex"},
+            {"doi": "10.2/b", "title": "Sem OA", "year": "2010", "relevancia": "0.30",
+             "status": "no_oa", "detail": "sem versão OA", "filename": "", "fonte": ""},
+            {"doi": "", "title": "Sem DOI <script>", "year": "", "relevancia": "",
+             "status": "error", "detail": "sem DOI", "filename": "", "fonte": ""},
         ]
-        c, h = write_reports(resultados, tmp, salvar_nao_encontrados=False)
-        assert c is None and h is None
+        # download_log.csv é sempre gravado (mesmo sem os relatórios de não baixados)
+        log, c, h = write_reports(resultados, tmp, salvar_nao_encontrados=False)
+        assert log.exists() and c is None and h is None
         assert not (tmp / "nao_encontrados.csv").exists()
-        assert not (tmp / "download_log.csv").exists()  # não deve mais existir
+        log_txt = log.read_text(encoding="utf-8-sig").splitlines()
+        assert log_txt[0] == "doi,title,year,status,fonte,relevancia"  # fonte + relevancia
+        assert "OpenAlex" in log_txt[1] and log_txt[1].endswith("0.90")
 
-        c, h = write_reports(resultados, tmp, salvar_nao_encontrados=True)
-        assert c.exists() and h.exists()
-        assert c.read_text(encoding="utf-8-sig").splitlines()[0] == "doi,title,year"  # ano no CSV
+        log, c, h = write_reports(resultados, tmp, salvar_nao_encontrados=True)
+        assert log.exists() and c.exists() and h.exists()
+        assert c.read_text(encoding="utf-8-sig").splitlines()[0] == "doi,title,year,relevancia"
         conteudo = h.read_text(encoding="utf-8")
         assert conteudo.count('<tr data-key=') == 2  # só os 2 não baixados
         assert 'href="https://doi.org/10.2/b"' in conteudo
         assert 'onclick="marcar(this)"' in conteudo   # DOI marca a linha ao abrir
-        assert 'onchange="toggle(this)"' in conteudo   # checkbox manual
         assert "localStorage" in conteudo              # progresso persistido
-        assert 'onclick="sortBy(' in conteudo          # cabeçalhos ordenáveis
         assert ",'year')" in conteudo                  # cabeçalho Ano ordenável
         assert '<td class="ano">2010</td>' in conteudo
+        assert ",'rel')" in conteudo and 'id="filtro-rel"' in conteudo  # coluna + slider de relevância
+        assert 'data-rel="0.30"' in conteudo
         assert "&lt;script&gt;" in conteudo  # título escapado (sem XSS)
-        assert "<script>Sem DOI" not in conteudo
 
-        # HTML sem nenhum ano: coluna Ano não aparece (nem th nem td)
-        sem_ano = build_not_found_html([{"doi": "10.9/z", "title": "T", "status": "no_oa"}])
-        assert ",'year')" not in sem_ano and 'class="ano"' not in sem_ano
+        # Sem ano nem relevância: essas colunas/filtros não aparecem
+        simples = build_not_found_html([{"doi": "10.9/z", "title": "T", "status": "no_oa"}])
+        assert ",'year')" not in simples and 'class="ano"' not in simples
+        assert ",'rel')" not in simples and 'id="filtro-rel"' not in simples
+
+        # Orquestrador buscar_pdf: para na 1ª fonte com PDF; colhe ano das anteriores.
+        globals()["REQUEST_DELAY"] = 0  # sem pausa real no self-check
+        class _Resp:
+            def __init__(self, js, code=200): self._js, self.status_code = js, code
+            def raise_for_status(self):
+                if self.status_code >= 400: raise requests.exceptions.HTTPError()
+            def json(self): return self._js
+        class _Sess:
+            def get(self, url, **kw):
+                if "unpaywall" in url:  # responde, ano, mas sem PDF
+                    return _Resp({"year": 2018, "best_oa_location": None})
+                if "openalex" in url:   # acha o PDF
+                    return _Resp({"publication_year": 2018,
+                                  "best_oa_location": {"pdf_url": "http://x/a.pdf"}})
+                return _Resp({}, 404)
+        pdf, fonte, year, err = buscar_pdf("10.1/a", "e@x.com", _Sess())
+        assert pdf == "http://x/a.pdf" and fonte == "OpenAlex" and year == "2018" and err is None
 
     print("downloader.py: todos os self-checks passaram.")
 

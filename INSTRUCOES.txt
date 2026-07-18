@@ -49,12 +49,21 @@ COMO USAR
      de conta nem senha — fica salvo para a próxima vez)
   3. Confira a pasta de destino (padrão: pasta "pdfs" ao lado da lista)
   4. Clique em "Iniciar download" e acompanhe o progresso
-  5. Ao final, a lista dos NÃO baixados é salva junto com os PDFs
-     (opcional — desmarque a caixa na etapa de configuração para não gerar):
-       • nao_encontrados.csv  — para reprocessar depois ou repassar
-       • nao_encontrados.html — abra no navegador: DOIs clicáveis, com
-         coluna de ano (clique no cabeçalho para ordenar) e marcação
-         do que você já abriu
+  Dica: o botão "Baixar modelo de CSV" salva um arquivo com o cabeçalho
+  certo (DOI, Titulo, Ano, relevancia). Você pode pedir a uma IA para
+  montar a lista seguindo exatamente esse cabeçalho.
+
+  Para cada artigo, o programa tenta 3 fontes até achar o PDF: Unpaywall,
+  OpenAlex e Semantic Scholar.
+
+  5. Ao final, são salvos junto com os PDFs:
+       • download_log.csv     — registro de todos os artigos, com o status,
+         a fonte que achou o PDF e a relevância (se havia no arquivo)
+       • nao_encontrados.csv  — só os não baixados, para reprocessar depois
+       • nao_encontrados.html — abra no navegador: DOIs clicáveis, colunas
+         de ano e relevância (clique no cabeçalho para ordenar; há um filtro
+         "mostrar apenas relevância ≥ X") e marcação do que você já abriu
+     (o nao_encontrados é opcional — desmarque a caixa para não gerar)
 
 
 DÚVIDAS / PROBLEMAS (WINDOWS 11)

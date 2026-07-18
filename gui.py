@@ -124,6 +124,16 @@ class App(tk.Tk):
         self.lbl_file = tk.Label(row, text="Nenhum arquivo selecionado", bg=COLORS["bg"], anchor="w")
         self.lbl_file.pack(side="left", padx=10)
 
+        modelo_row = tk.Frame(f, bg=COLORS["bg"])
+        modelo_row.pack(fill="x", pady=(6, 0))
+        tk.Button(modelo_row, text="⬇ Baixar modelo de CSV",
+                  command=self._on_baixar_modelo).pack(side="left")
+        tk.Label(modelo_row,
+                 text="Modelo com as colunas certas. Dica: peça a uma IA para gerar a "
+                      "lista seguindo exatamente este cabeçalho — DOI, Titulo, Ano, relevancia.",
+                 bg=COLORS["bg"], fg="#52525b", justify="left", wraplength=560,
+                 anchor="w").pack(side="left", padx=10, fill="x", expand=True)
+
         self.lbl_file_info = tk.Label(f, text="", bg=COLORS["bg"], justify="left", anchor="w")
         self.lbl_file_info.pack(fill="x", pady=(6, 0))
 
@@ -271,8 +281,8 @@ class App(tk.Tk):
         carregados, erros_leitura = [], []
         for p in paths:
             try:
-                header, rows, delim, doi_col, title_col, year_col = dl.read_file(p)
-                carregados.append((Path(p).name, header, rows, doi_col, title_col, year_col))
+                header, rows, delim, doi_col, title_col, year_col, rel_col = dl.read_file(p)
+                carregados.append((Path(p).name, header, rows, doi_col, title_col, year_col, rel_col))
             except Exception as e:
                 erros_leitura.append(f"{Path(p).name}: {e}")
 
@@ -296,7 +306,7 @@ class App(tk.Tk):
             if sem_colunas:
                 nomes = ", ".join(c[0] for c in sem_colunas)
                 avisos.append(f"⚠ Ignorado(s) por colunas não identificadas: {nomes}")
-            self._load_articles([(h, r, dc, tc, yc) for _, h, r, dc, tc, yc in detectados],
+            self._load_articles([(h, r, dc, tc, yc, rc) for _, h, r, dc, tc, yc, rc in detectados],
                                  len(detectados), avisos)
         elif len({tuple(c[1]) for c in sem_colunas}) == 1:
             # Nenhum detectado, mas todos têm o mesmo cabeçalho: fallback manual
@@ -326,17 +336,17 @@ class App(tk.Tk):
             messagebox.showwarning("Colunas incompletas", "Selecione a coluna de DOI e a de Título.")
             return
         doi_col, title_col = self.header.index(doi_name), self.header.index(title_name)
-        # year_col vem do que foi autodetectado em cada arquivo (índice 5), mesmo
+        # year_col/rel_col vêm do que foi autodetectado em cada arquivo, mesmo
         # que DOI/título tenham exigido escolha manual.
-        self._load_articles([(h, r, doi_col, title_col, yc) for _, h, r, _, _, yc in self._pending_manual],
+        self._load_articles([(h, r, doi_col, title_col, yc, rc) for _, h, r, _, _, yc, rc in self._pending_manual],
                              len(self._pending_manual), [])
         self._update_start_button()
 
     def _load_articles(self, file_infos, n_arquivos, avisos):
-        """file_infos: lista de (header, rows, doi_col, title_col, year_col) resolvidos."""
+        """file_infos: lista de (header, rows, doi_col, title_col, year_col, rel_col)."""
         artigos = []
-        for header, rows, doi_col, title_col, year_col in file_infos:
-            artigos.extend(dl.extract_articles(rows, doi_col, title_col, year_col))
+        for header, rows, doi_col, title_col, year_col, rel_col in file_infos:
+            artigos.extend(dl.extract_articles(rows, doi_col, title_col, year_col, rel_col))
         self.articles, duplicados = dl.dedupe_articles(artigos)
         # Marca as colunas como resolvidas (habilita o botão Iniciar); os índices
         # por arquivo já foram aplicados em extract_articles.
@@ -368,6 +378,19 @@ class App(tk.Tk):
         for a in self.articles:
             row_id = self.tree.insert("", "end", values=(a["title"][:80], a["doi"], "aguardando"))
             self.row_ids[len(self.row_ids)] = row_id
+
+    def _on_baixar_modelo(self):
+        destino = filedialog.asksaveasfilename(
+            defaultextension=".csv", initialfile="modelo_input.csv",
+            initialdir=self._last_dir, filetypes=[("CSV", "*.csv")])
+        if destino:
+            try:
+                Path(destino).write_text(dl.MODELO_CSV, encoding="utf-8-sig")
+                messagebox.showinfo("Modelo salvo",
+                                    f"Modelo salvo em:\n{destino}\n\nPreencha uma linha por artigo. "
+                                    "DOI e Titulo são obrigatórios; Ano e relevancia são opcionais.")
+            except OSError as e:
+                messagebox.showerror("Erro", f"Não foi possível salvar o modelo:\n{e}")
 
     def _on_choose_dest(self):
         inicio = Path(self.dest_var.get().strip() or self._last_dir)
@@ -476,8 +499,8 @@ class App(tk.Tk):
             self._update_progress_label(i, total)
 
         elif kind == "done":
-            _, summary, csv_path, html_path, cancelled = msg
-            self._show_results(summary, csv_path, html_path, cancelled)
+            _, summary, log_path, csv_path, html_path, cancelled = msg
+            self._show_results(summary, log_path, csv_path, html_path, cancelled)
 
     def _status_label(self, result):
         if result["status"] == "downloaded":
@@ -502,7 +525,7 @@ class App(tk.Tk):
         remaining = max(total - i, 0) * rate
         self.lbl_progress.configure(text=f"{i} de {total} processados · tempo restante estimado: {int(remaining)}s")
 
-    def _show_results(self, summary, csv_path, html_path, cancelled):
+    def _show_results(self, summary, log_path, csv_path, html_path, cancelled):
         self.finished = True
         self.html_path = html_path
         self.btn_select_file.configure(state="normal")
@@ -517,10 +540,11 @@ class App(tk.Tk):
         note = " (processo cancelado antes do fim)" if cancelled else ""
         texto = f"{not_found_count} artigo(s) não baixado(s){note}"
         if csv_path:
-            texto += (f" → salvos em 'nao_encontrados.csv' e 'nao_encontrados.html' "
-                      f"(abra o HTML para clicar nos DOIs).")
+            texto += (" → salvos em 'nao_encontrados.csv' e 'nao_encontrados.html' "
+                      "(abra o HTML para clicar nos DOIs).")
         else:
             texto += " (lista não salva)."
+        texto += "\nLog completo da execução em 'download_log.csv'."
         self.lbl_not_found.configure(text=texto)
 
         # Botão de abrir o HTML só faz sentido quando ele foi gerado
