@@ -11,6 +11,7 @@ import queue
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import traceback
 
@@ -204,6 +205,24 @@ def _abrir_app():
     console + arquivo de log), e o código de saída != 0 faz o .bat pausar.
     """
     pasta = os.path.dirname(SCRIPT)
+
+    # Os arquivos do programa (app.py, gui.py, downloader.py) ficam SEMPRE ao lado
+    # deste launcher. Se algum sumiu, quase sempre é porque o programa foi aberto
+    # de DENTRO do .zip (o Windows extrai só um arquivo para uma pasta temporária,
+    # tipo ...\Temp\<id>_CSVtoPDF-main.zip\..., e os demais não existem lá).
+    faltando = [n for n in ("app.py", "gui.py", "downloader.py")
+                if not os.path.isfile(os.path.join(pasta, n))]
+    if faltando:
+        na_temp = "temp" in pasta.lower() or ".zip" in pasta.lower()
+        dica = ("Parece que você abriu o programa de DENTRO do .zip.\n"
+                if na_temp else "Faltam arquivos do programa.\n")
+        _erro_ao_abrir(
+            "Arquivos não encontrados: " + ", ".join(faltando) + "\nPasta: " + pasta,
+            resumo=(dica +
+                    "\nDescompacte (extraia) a pasta do .zip primeiro e execute a\n"
+                    "partir da pasta extraída — não de dentro do .zip."))
+        return
+
     if pasta not in sys.path:
         sys.path.insert(0, pasta)
     try:
@@ -227,15 +246,23 @@ def _abrir_app():
         _erro_ao_abrir(traceback.format_exc())
 
 
-def _erro_ao_abrir(detalhe):
+def _erro_ao_abrir(detalhe, resumo=None):
     """Mostra a falha de inicialização de todas as formas possíveis, para que
-    o usuário consiga ver e reportar (em vez de a janela só não abrir)."""
+    o usuário consiga ver e reportar (em vez de a janela só não abrir).
+
+    resumo: mensagem amigável mostrada no diálogo; sem ela, usa a última linha
+    do detalhe (útil para tracebacks)."""
+    # Tenta salvar o log ao lado do launcher; se a pasta for read-only (ex.:
+    # rodando de dentro do .zip), cai para a pasta temporária do sistema.
     log = os.path.join(os.path.dirname(SCRIPT), "csvtopdf_erro.txt")
-    try:
-        with open(log, "w", encoding="utf-8") as f:
-            f.write(detalhe)
-    except OSError:
-        log = "(não foi possível salvar o log)"
+    for destino in (log, os.path.join(tempfile.gettempdir(), "csvtopdf_erro.txt")):
+        try:
+            with open(destino, "w", encoding="utf-8") as f:
+                f.write(detalhe)
+            log = destino
+            break
+        except OSError:
+            log = "(não foi possível salvar o log)"
 
     print("\n===== Erro ao abrir o CSVtoPDF =====")
     print(detalhe)
@@ -246,11 +273,10 @@ def _erro_ao_abrir(detalhe):
         from tkinter import messagebox
         r = tk.Tk()
         r.withdraw()
-        ultima = detalhe.strip().splitlines()[-1] if detalhe.strip() else "erro desconhecido"
+        msg = resumo or (detalhe.strip().splitlines()[-1] if detalhe.strip() else "erro desconhecido")
         messagebox.showerror(
             "CSVtoPDF — erro ao abrir",
-            "O programa encontrou um erro ao abrir:\n\n"
-            f"{ultima}\n\nDetalhes completos salvos em:\n{log}")
+            f"{msg}\n\nDetalhes salvos em:\n{log}")
         r.destroy()
     except Exception:
         pass
