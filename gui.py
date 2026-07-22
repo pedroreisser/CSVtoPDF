@@ -168,10 +168,26 @@ class App(tk.Tk):
         tk.Entry(row2, textvariable=self.dest_var, width=35).pack(side="left", fill="x", expand=True)
         tk.Button(row2, text="Escolher...", command=self._on_choose_dest).pack(side="left", padx=(6, 0))
 
+        row3 = tk.Frame(f, bg=COLORS["bg"])
+        row3.pack(fill="x", pady=2)
+        tk.Label(row3, text="\U0001F511 Chave Semantic Scholar (opcional):", bg=COLORS["bg"], width=32, anchor="w").pack(side="left")
+        self.semantic_key_var = tk.StringVar()
+        tk.Entry(row3, textvariable=self.semantic_key_var, width=35).pack(side="left", fill="x", expand=True)
+        tk.Label(f, text="Sem chave, a API do Semantic Scholar cai numa cota anônima baixa e "
+                      "compartilhada por IP, e costuma devolver 429 (limite excedido). Chave "
+                      "grátis em semanticscholar.org/product/api.",
+                 bg=COLORS["bg"], fg="#52525b", justify="left", wraplength=700,
+                 anchor="w").pack(fill="x")
+
         self.nao_encontrados_var = tk.BooleanVar(value=True)
         tk.Checkbutton(f, text="Salvar lista dos não baixados",
                        variable=self.nao_encontrados_var, bg=COLORS["bg"],
                        anchor="w").pack(fill="x", pady=(4, 0))
+
+        self.log_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(f, text="Gravar log de diagnóstico (arquivo técnico — envie-o se der problema)",
+                       variable=self.log_var, bg=COLORS["bg"],
+                       anchor="w").pack(fill="x")
 
     def _build_download_section(self, parent):
         f = self._section(parent, "3. Download")
@@ -228,6 +244,10 @@ class App(tk.Tk):
 
         self.btn_open_html = tk.Button(self.result_frame, text="\U0001F517 Abrir lista de DOIs (HTML)", command=self._on_open_html)
         # (empacotado só quando o HTML existe — ver _show_results)
+
+        self.btn_open_debug_log = tk.Button(self.result_frame, text="\U0001F41E Abrir log de diagnóstico",
+                                            command=self._on_open_debug_log)
+        # (empacotado só quando o log foi gravado — ver _show_results)
 
     def _big_stat(self, parent, color):
         frame = tk.Frame(parent, bg=COLORS["bg"])
@@ -417,10 +437,14 @@ class App(tk.Tk):
         if cfg.get("email"):
             self.email_var.set(cfg["email"])
         self.nao_encontrados_var.set(cfg.get("salvar_nao_encontrados", True))
+        self.log_var.set(cfg.get("log_diagnostico", True))
+        self.semantic_key_var.set(cfg.get("semantic_scholar_api_key", ""))
 
     def _save_config(self):
         dl.save_config({"email": self.email_var.get().strip(),
-                        "salvar_nao_encontrados": self.nao_encontrados_var.get()})
+                        "salvar_nao_encontrados": self.nao_encontrados_var.get(),
+                        "log_diagnostico": self.log_var.get(),
+                        "semantic_scholar_api_key": self.semantic_key_var.get().strip()})
 
     # ---------- download flow ----------
 
@@ -451,7 +475,8 @@ class App(tk.Tk):
         self.worker = threading.Thread(
             target=dl.process_articles,
             args=(self.articles, email, self.dest_folder, self.msg_queue, self.cancel_event,
-                  self.nao_encontrados_var.get()),
+                  self.nao_encontrados_var.get(), self.log_var.get(),
+                  self.semantic_key_var.get().strip() or None),
             daemon=True,
         )
         self.worker.start()
@@ -503,8 +528,8 @@ class App(tk.Tk):
             self._update_progress_label(i, total)
 
         elif kind == "done":
-            _, summary, log_path, csv_path, html_path, cancelled = msg
-            self._show_results(summary, log_path, csv_path, html_path, cancelled)
+            _, summary, log_path, csv_path, html_path, cancelled, debug_log_path = msg
+            self._show_results(summary, log_path, csv_path, html_path, cancelled, debug_log_path)
 
     def _status_label(self, result):
         if result["status"] == "downloaded":
@@ -529,9 +554,10 @@ class App(tk.Tk):
         remaining = max(total - i, 0) * rate
         self.lbl_progress.configure(text=f"{i} de {total} processados · tempo restante estimado: {int(remaining)}s")
 
-    def _show_results(self, summary, log_path, csv_path, html_path, cancelled):
+    def _show_results(self, summary, log_path, csv_path, html_path, cancelled, debug_log_path=""):
         self.finished = True
         self.html_path = html_path
+        self.debug_log_path = debug_log_path
         self.btn_select_file.configure(state="normal")
         self.btn_cancel.configure(state="disabled")
         self._update_start_button()
@@ -549,10 +575,14 @@ class App(tk.Tk):
         else:
             texto += " (lista não salva)."
         texto += "\nLog completo da execução em 'download_log.csv'."
+        if debug_log_path:
+            texto += "\nLog técnico de diagnóstico em 'csvtopdf_debug.log' — envie-o se algo deu errado."
         self.lbl_not_found.configure(text=texto)
 
         # Botão de abrir o HTML só faz sentido quando ele foi gerado
         self.btn_open_html.pack(anchor="w", pady=(6, 0)) if html_path else self.btn_open_html.pack_forget()
+        # Idem para o log de diagnóstico: só existe se o checkbox estava marcado
+        self.btn_open_debug_log.pack(anchor="w", pady=(6, 0)) if debug_log_path else self.btn_open_debug_log.pack_forget()
 
         # Encolhe a tabela antes de mostrar o resultado: com ela na altura cheia,
         # o pack corta o painel 4 para fora da janela e o dashboard fica invisível.
@@ -567,6 +597,10 @@ class App(tk.Tk):
     def _on_open_html(self):
         if getattr(self, "html_path", ""):
             self._abrir(self.html_path)
+
+    def _on_open_debug_log(self):
+        if getattr(self, "debug_log_path", ""):
+            self._abrir(self.debug_log_path)
 
     def _abrir(self, path):
         system = platform.system()

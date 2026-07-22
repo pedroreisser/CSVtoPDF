@@ -5,6 +5,8 @@ Sem dependência de interface — testável isoladamente (ver demo() no final).
 import csv
 import html
 import json
+import logging
+import platform
 import re
 import time
 from pathlib import Path
@@ -12,12 +14,23 @@ from urllib.parse import quote
 
 import requests
 
+# Log de diagnóstico: técnico, com traceback, pensado para o usuário anexar e
+# enviar quando reportar um problema — diferente do download_log.csv, que é o
+# relatório de resultado por artigo (sem detalhe de exceção).
+logger = logging.getLogger("csvtopdf")
+logger.setLevel(logging.DEBUG)
+
 UNPAYWALL_URL = "https://api.unpaywall.org/v2/{doi}"
 OPENALEX_URL = "https://api.openalex.org/works/doi:{doi}"
 SEMANTIC_URL = "https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}"
 REQUEST_DELAY = 1.0
 API_TIMEOUT = 15
 DOWNLOAD_TIMEOUT = 30
+# Alguns editores (MDPI, Wiley...) bloqueiam por WAF o User-Agent padrão do
+# requests ("python-requests/x.y") mesmo em links que o Unpaywall confirma
+# como acesso aberto; um User-Agent de navegador comum evita esse bloqueio.
+USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
 DOI_SYNONYMS = {"doi", "di"}
 TITLE_SYNONYMS = {"title", "titulo", "título", "ti"}
@@ -26,7 +39,8 @@ RELEVANCIA_SYNONYMS = {"relevancia", "relevância", "score"}
 
 CONFIG_PATH = Path.home() / ".csvtopdf_config.json"
 
-# Modelo de CSV de entrada (também escrito em modelo_input.csv, ver botão na GUI).
+# Modelo de CSV de entrada (baixável pelo botão na GUI; ver também modelo_input.md,
+# com instruções para uma IA montar a lista a partir de referências soltas).
 MODELO_CSV = ("DOI,Titulo,Ano,relevancia\n"
               "10.xxxx/exemplo,Título de exemplo aqui,2020,0.85\n")
 
@@ -64,6 +78,25 @@ def save_config(data):
         CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         pass
+
+
+def setup_logging(dest_folder, enabled):
+    """(Re)configura o log de diagnóstico desta execução; None se desativado.
+
+    Grava em <dest_folder>/csvtopdf_debug.log. Reseta os handlers a cada
+    chamada porque a GUI pode rodar vários downloads na mesma sessão.
+    """
+    for h in list(logger.handlers):
+        logger.removeHandler(h)
+        h.close()
+    if not enabled:
+        return None
+    log_path = Path(dest_folder) / "csvtopdf_debug.log"
+    handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+    logger.info("Início da execução | Python %s | %s", platform.python_version(), platform.platform())
+    return log_path
 
 
 def detect_delimiter(file_path):
@@ -157,7 +190,7 @@ def _unique_path(path):
 # consegue responder, ou None quando nem responde (404 / erro). pdf_url None = a
 # fonte respondeu mas não tem PDF aberto (ainda serve para colher o ano).
 
-def buscar_unpaywall(doi, email, session):
+def buscar_unpaywall(doi, email, session, semantic_key=None):
     url = UNPAYWALL_URL.format(doi=quote(doi, safe=""))
     resp = session.get(url, params={"email": email}, timeout=API_TIMEOUT)
     if resp.status_code == 404:
@@ -169,7 +202,7 @@ def buscar_unpaywall(doi, email, session):
             "year": str(data.get("year") or "").strip()}
 
 
-def buscar_openalex(doi, email, session):
+def buscar_openalex(doi, email, session, semantic_key=None):
     url = OPENALEX_URL.format(doi=quote(doi, safe=""))
     resp = session.get(url, params={"mailto": email} if email else None, timeout=API_TIMEOUT)
     if resp.status_code == 404:
@@ -181,9 +214,12 @@ def buscar_openalex(doi, email, session):
             "year": str(data.get("publication_year") or "").strip()}
 
 
-def buscar_semantic_scholar(doi, email, session):
+def buscar_semantic_scholar(doi, email, session, semantic_key=None):
+    # Sem chave, a API cai na cota anônima (baixa e compartilhada por IP) e
+    # devolve 429 com frequência; uma chave gratuita evita isso na prática.
     url = SEMANTIC_URL.format(doi=quote(doi, safe=""))
-    resp = session.get(url, params={"fields": "openAccessPdf,year"}, timeout=API_TIMEOUT)
+    headers = {"x-api-key": semantic_key} if semantic_key else None
+    resp = session.get(url, params={"fields": "openAccessPdf,year"}, headers=headers, timeout=API_TIMEOUT)
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
@@ -196,7 +232,7 @@ def buscar_semantic_scholar(doi, email, session):
 FONTES = (buscar_unpaywall, buscar_openalex, buscar_semantic_scholar)
 
 
-def buscar_pdf(doi, email, session):
+def buscar_pdf(doi, email, session, semantic_key=None):
     """Tenta as fontes em ordem e para na primeira que devolver um PDF.
 
     Retorna (pdf_url, fonte, year, erro): erro is None em caso de sucesso;
@@ -210,8 +246,9 @@ def buscar_pdf(doi, email, session):
         if i > 0:
             time.sleep(REQUEST_DELAY)
         try:
-            r = fonte(doi, email, session)
-        except requests.exceptions.RequestException:
+            r = fonte(doi, email, session, semantic_key)
+        except requests.exceptions.RequestException as e:
+            logger.debug("Fonte %s falhou para doi=%s: %s", fonte.__name__, doi, e)
             r = None
         if r is None:
             continue
@@ -232,18 +269,21 @@ def download_pdf(url, dest_path, session):
 
 
 def process_articles(articles, email, dest_folder, msg_queue, cancel_event,
-                     salvar_nao_encontrados=True):
+                     salvar_nao_encontrados=True, log_diagnostico=True, semantic_key=None):
     """Roda em thread separada. Publica mensagens em msg_queue como tuplas:
         ("processing", i, total, title)
         ("result", i, total, result_dict)
-        ("done", summary_dict, csv_path, html_path, was_cancelled)
-    csv_path/html_path são "" quando o usuário optou por não salvar a lista.
+        ("done", summary_dict, log_path, csv_path, html_path, was_cancelled, debug_log_path)
+    csv_path/html_path são "" quando o usuário optou por não salvar a lista;
+    debug_log_path é "" quando log_diagnostico=False.
     """
     dest_folder = Path(dest_folder)
     dest_folder.mkdir(parents=True, exist_ok=True)
+    debug_log_path = setup_logging(dest_folder, log_diagnostico)
 
     results = []
     session = requests.Session()
+    session.headers.update({"User-Agent": USER_AGENT})
     total = len(articles)
 
     for i, article in enumerate(articles, start=1):
@@ -252,7 +292,8 @@ def process_articles(articles, email, dest_folder, msg_queue, cancel_event,
 
         doi, title = article["doi"], article["title"]
         msg_queue.put(("processing", i, total, title))
-        status, detail, filename, year_api, fonte = _process_one(doi, title, email, dest_folder, session)
+        status, detail, filename, year_api, fonte = _process_one(
+            doi, title, email, dest_folder, session, semantic_key)
 
         # Ano: prefere o do arquivo de origem; cai para o que a API devolveu.
         year = article.get("year") or year_api
@@ -267,17 +308,20 @@ def process_articles(articles, email, dest_folder, msg_queue, cancel_event,
         time.sleep(REQUEST_DELAY)
 
     log_path, csv_path, html_path = write_reports(results, dest_folder, salvar_nao_encontrados)
+    if debug_log_path:
+        logger.info("Fim da execução | %s", _summarize(results))
     msg_queue.put(("done", _summarize(results), str(log_path),
                    str(csv_path) if csv_path else "",
-                   str(html_path) if html_path else "", cancel_event.is_set()))
+                   str(html_path) if html_path else "", cancel_event.is_set(),
+                   str(debug_log_path) if debug_log_path else ""))
 
 
-def _process_one(doi, title, email, dest_folder, session):
+def _process_one(doi, title, email, dest_folder, session, semantic_key=None):
     """Retorna (status, detail, filename, year, fonte)."""
     if not doi:
         return "error", "sem DOI", "", "", ""
     try:
-        pdf_url, fonte, year, err = buscar_pdf(doi, email, session)
+        pdf_url, fonte, year, err = buscar_pdf(doi, email, session, semantic_key)
         if err:
             return ("no_oa" if err == "sem versão OA" else "error"), err, "", year, ""
 
@@ -286,12 +330,16 @@ def _process_one(doi, title, email, dest_folder, session):
             download_pdf(pdf_url, dest_path, session)
             return "downloaded", "ok", dest_path.name, year, fonte
         except Exception:
+            logger.exception("Falha no download do PDF | doi=%s url=%s", doi, pdf_url)
             return "error", "falha no download", "", year, fonte
     except requests.exceptions.Timeout:
+        logger.warning("Timeout ao buscar PDF | doi=%s", doi)
         return "error", "timeout", "", "", ""
     except requests.exceptions.RequestException:
+        logger.exception("Erro de conexão ao buscar PDF | doi=%s", doi)
         return "error", "erro de conexão", "", "", ""
     except Exception:
+        logger.exception("Erro inesperado ao processar artigo | doi=%s title=%s", doi, title)
         return "error", "erro inesperado", "", "", ""
 
 
@@ -595,6 +643,14 @@ def demo():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
 
+        # Log de diagnóstico: liga, escreve, desliga sem deixar handler pendurado.
+        debug_path = setup_logging(tmp, True)
+        assert debug_path == tmp / "csvtopdf_debug.log"
+        logger.warning("teste")
+        assert "teste" in debug_path.read_text(encoding="utf-8")
+        assert setup_logging(tmp, False) is None
+        assert logger.handlers == []
+
         csv_path = tmp / "clean.csv"
         csv_path.write_text("DOI,Title\n10.1/abc,Um Titulo\n,Sem doi\n", encoding="utf-8")
         header, rows, delim, doi_col, title_col, year_col, rel_col = read_file(csv_path)
@@ -691,6 +747,18 @@ def demo():
                 return _Resp({}, 404)
         pdf, fonte, year, err = buscar_pdf("10.1/a", "e@x.com", _Sess())
         assert pdf == "http://x/a.pdf" and fonte == "OpenAlex" and year == "2018" and err is None
+
+        # Chave do Semantic Scholar vai no header x-api-key só quando informada
+        # (evita o 429 da cota anônima observado em execuções reais).
+        chamadas = []
+        class _SessCaptura:
+            def get(self, url, headers=None, **kw):
+                chamadas.append(headers)
+                return _Resp({}, 404)
+        buscar_semantic_scholar("10.1/a", "e@x.com", _SessCaptura())
+        assert chamadas[-1] is None
+        buscar_semantic_scholar("10.1/a", "e@x.com", _SessCaptura(), semantic_key="minha-chave")
+        assert chamadas[-1] == {"x-api-key": "minha-chave"}
 
     print("downloader.py: todos os self-checks passaram.")
 

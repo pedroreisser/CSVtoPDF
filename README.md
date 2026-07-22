@@ -31,8 +31,9 @@ Instruções para usuários leigos em `INSTRUCOES.txt`.
    `Title`/`Titulo`/`TI`), Ano (`Year`/`PY`/`Ano`) e relevância
    (`relevancia`/`score`). Se não conseguir identificar, escolha as colunas
    manualmente. O botão **Baixar modelo de CSV** salva um `modelo_input.csv` com o
-   cabeçalho esperado (`DOI,Titulo,Ano,relevancia`) — útil como instrução para uma
-   IA gerar a lista já filtrada.
+   cabeçalho esperado (`DOI,Titulo,Ano,relevancia`). Para pedir a uma IA que monte
+   a lista, use `modelo_input.md` — tem as regras de formato e um lugar para colar
+   as referências.
 2. **Configuração**: informe um e-mail válido (exigido pela API da Unpaywall, sem
    necessidade de conta) e a pasta de destino dos PDFs (padrão: pasta `pdfs` ao lado
    do arquivo carregado).
@@ -45,13 +46,19 @@ Instruções para usuários leigos em `INSTRUCOES.txt`.
      que achou o PDF e a `relevancia`, quando presente).
    - `nao_encontrados.csv` / `nao_encontrados.html` — apenas os não baixados. O HTML
      tem DOIs clicáveis, colunas de ano e relevância (com filtro "≥ X" e ordenação).
+   - `csvtopdf_debug.log` — log técnico (timestamps, exceções com traceback) para
+     diagnosticar problemas reportados por outros usuários; peça para te enviarem
+     esse arquivo. Gerado por padrão; dá para desativar no checkbox da seção
+     "2. Configuração".
 
 ## Estrutura
 
 - `downloader.py` — lógica pura (leitura de arquivo, busca em cascata
   Unpaywall/OpenAlex/Semantic Scholar, download, geração dos logs e do HTML). Sem
   dependência de interface; rode `python downloader.py` para os self-checks.
-- `modelo_input.csv` — modelo do CSV de entrada (também baixável pela interface).
+- `modelo_input.md` — instruções para uma IA montar o CSV de entrada a partir de
+  uma lista de referências (o próprio CSV de exemplo também é baixável pela
+  interface, botão **Baixar modelo de CSV**).
 - `gui.py` — interface tkinter, roda o download numa thread separada e recebe o
   progresso via `queue.Queue`.
 - `app.py` — ponto de entrada.
@@ -64,3 +71,12 @@ Instruções para usuários leigos em `INSTRUCOES.txt`.
   (Unpaywall, OpenAlex, Semantic Scholar) retornam como acesso aberto. Há uma pausa
   de ~1s entre cada chamada de API, inclusive entre fontes do mesmo artigo.
 - O e-mail informado é salvo em `~/.csvtopdf_config.json` para a próxima sessão.
+- A sessão HTTP envia um User-Agent de navegador comum (alguns editores bloqueiam
+  o User-Agent padrão do `requests` mesmo em links de acesso aberto confirmado
+  pelo Unpaywall). Corrige o bloqueio em parte dos casos (ex.: academicjournals.org);
+  editores com proteção mais robusta (Cloudflare/fingerprint), como MDPI e Wiley,
+  continuam bloqueando — o app não tenta contornar isso.
+- Chave de API do Semantic Scholar (campo opcional na seção "2. Configuração"):
+  sem ela, a API usa uma cota anônima baixa e compartilhada por IP, que costuma
+  devolver 429 (limite excedido) e derruba a taxa de acerto dessa fonte. Chave
+  grátis em semanticscholar.org/product/api.
